@@ -16,4 +16,20 @@ env/
 
 # Environment files
 .env*
+
+# Data & Models
 data/
+adapters/
+*.safetensors
+*.bin
+*.pt
+
+# Logs & Temporary Files
+project_log.json
+wandb/
+*.log
+seal_agent_colab_*.zip
+
+# IDE settings
+.vscode/
+.idea/
