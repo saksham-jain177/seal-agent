@@ -53,11 +53,3 @@ seal-agent/
    ```
 3. **Internalize**:
    The agent automatically detects and loads the latest adapter from `adapters/lora_adapter` on next run.
-
-## Hardware Optimization
-
-Optimized for 6GB VRAM (RTX 4050 Laptops).
-
-- Uses `Llama-3.2-3B` for training to ensure fit.
-- Short training runs (≤40 steps) to prevent hardware degradation.
-- No AMP or fused optimizers by default for maximum stability.
