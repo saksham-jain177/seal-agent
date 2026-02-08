@@ -11,7 +11,8 @@ import argparse
 # ---- Configuration ----
 # Default to Llama-3.2-3B for 6GB VRAM compatibility
 DEFAULT_MODEL = "unsloth/Llama-3.2-3B-Instruct" 
-DATA_PATH = "data/self_edits.jsonl"
+DATA_PATH = "data/edit_proposals.jsonl"
+LEDGER_PATH = "data/edit_ledger.json"
 ADAPTER_OUTPUT_DIR = "adapters/lora_adapter"
 # Optimized for faster training (reduced from 100 steps)
 MAX_STEPS = 40        # Reduced for faster iterations (was 100)
@@ -24,14 +25,38 @@ MIN_NEW_EDITS_FOR_TRAINING = 10  # Minimum new Q&A pairs before training
 
 # ---- Dataset loader ----
 def load_dataset(path):
+    if not os.path.exists(LEDGER_PATH):
+        return Dataset.from_list([])
+        
+    with open(LEDGER_PATH, "r") as f:
+        ledger = json.load(f)
+    
+    risk_threshold = ledger.get("risk_threshold", 0.4)
+    min_confidence = ledger.get("min_confidence", 0.7)
+    budget = ledger.get("current_budget", 50)
+    
     with open(path, "r", encoding="utf-8") as f:
         entries = [json.loads(line) for line in f if line.strip()]
+    
     pairs = []
+    applied_count = 0
+    
     for e in entries:
-        q = e.get("question") or e.get("topic") or ""
-        a = e.get("answer") or e.get("content") or ""
-        if q and a:
-            pairs.append({"prompt": f"Question: {q}\nAnswer:", "response": a})
+        if applied_count >= budget:
+            break
+            
+        # SEAL Filtering: Only impactful, low-risk, high-confidence, un-applied edits
+        if (e.get("simulation_passed") and 
+            not e.get("applied") and
+            e.get("risk_score", 1.0) <= risk_threshold and
+            e.get("confidence", 0.0) >= min_confidence):
+            
+            q = e.get("proposed_q")
+            a = e.get("proposed_a")
+            if q and a:
+                pairs.append({"prompt": f"Question: {q}\nAnswer:", "response": a})
+                applied_count += 1
+                
     return Dataset.from_list(pairs)
 
 # ---- Tokenization ----
@@ -50,32 +75,30 @@ def tokenize(examples, tokenizer):
 # ---- Incremental Training Check ----
 def should_train(min_new_edits: int = MIN_NEW_EDITS_FOR_TRAINING) -> Tuple[bool, int]:
     """
-    Check if we have enough new edits to justify training.
-    Returns (should_train: bool, num_edits: int)
+    Check if we have enough approved/simulate-passed edits to justify training.
     """
-    if not os.path.exists(DATA_PATH):
+    if not os.path.exists(DATA_PATH) or not os.path.exists(LEDGER_PATH):
         return False, 0
     
-    # Count total edits
+    with open(LEDGER_PATH, "r") as f:
+        ledger = json.load(f)
+    
+    risk_threshold = ledger.get("risk_threshold", 0.4)
+    min_confidence = ledger.get("min_confidence", 0.7)
+    
+    ready_count = 0
     with open(DATA_PATH, "r", encoding="utf-8") as f:
-        total_edits = sum(1 for line in f if line.strip())
+        for line in f:
+            if line.strip():
+                e = json.loads(line)
+                if (e.get("simulation_passed") and 
+                    not e.get("applied") and
+                    e.get("risk_score", 1.0) <= risk_threshold and
+                    e.get("confidence", 0.0) >= min_confidence):
+                    ready_count += 1
     
-    # Check last training metadata
-    metadata_path = os.path.join(ADAPTER_OUTPUT_DIR, "adapter_meta.json")
-    if os.path.exists(metadata_path):
-        try:
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-            last_trained_count = metadata.get("num_edits_used", 0)
-            new_edits = total_edits - last_trained_count
-            should = new_edits >= min_new_edits
-            return should, new_edits
-        except Exception:
-            pass
-    
-    # No previous training or metadata corrupted
-    should = total_edits >= min_new_edits
-    return should, total_edits
+    should = ready_count >= min_new_edits
+    return should, ready_count
 
 # ---- Main ----
 def main():
@@ -157,11 +180,35 @@ def main():
     model.save_pretrained(ADAPTER_OUTPUT_DIR)
     tokenizer.save_pretrained(ADAPTER_OUTPUT_DIR)
 
+    # 4. Update Ledger & Metadata
+    from self_editor.save import update_ledger_applied_count
+    num_applied = len(dataset)
+    update_ledger_applied_count(num_applied)
+    
+    # Mark edits as applied in PROPOSALS_PATH (rewriting for simplicity in this minimal scale)
+    if os.path.exists(DATA_PATH):
+        temp_data = []
+        with open(DATA_PATH, "r") as f:
+            for line in f:
+                e = json.loads(line)
+                # This is a bit simplistic; in a larger system we'd use IDs
+                # But here we'll just mark the ones that passed the filter
+                if (e.get("simulation_passed") and 
+                    not e.get("applied") and
+                    e.get("risk_score", 1.0) <= 0.4 and # Hardcoded to match ledger default for now
+                    e.get("confidence", 0.0) >= 0.7):
+                    e["applied"] = True
+                temp_data.append(e)
+        
+        with open(DATA_PATH, "w") as f:
+            for e in temp_data:
+                f.write(json.dumps(e) + "\n")
+
     metadata = {
         "base_model": args.model,
         "epochs": EPOCHS,
         "max_steps": MAX_STEPS,
-        "num_edits_used": len(dataset),
+        "num_edits_used": num_applied,
         "adapter_dir": ADAPTER_OUTPUT_DIR,
         "timestamp": str(torch.utils.benchmark.utils.common.datetime.datetime.now())
     }

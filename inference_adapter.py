@@ -136,6 +136,18 @@ def is_adapter_available(adapter_path: str = ADAPTER_PATH) -> bool:
     return os.path.exists(os.path.join(adapter_path, "adapter_model.safetensors"))
 
 
+def get_learning_state(adapter_path: str = ADAPTER_PATH) -> dict:
+    """Retrieves the internal learning state from adapter metadata."""
+    meta_path = os.path.join(adapter_path, "adapter_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"status": "base_model", "message": "No fine-tuned adapter metadata found."}
+
+
 if __name__ == "__main__":
     # Test adapter loading
     print("Testing adapter inference...")

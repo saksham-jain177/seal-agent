@@ -1,31 +1,35 @@
-# SEAL Agent
+# SEAL Agent (Continual-Intelligence)
 
-A minimal, edge-device–oriented self-adapting research agent inspired by the SEAL framework. The agent performs web research, generates high-quality Q&A self-edits, and periodically internalizes knowledge via local LoRA fine-tuning.
+A structurally faithful implementation of the [SEAL paper](https://arxiv.org/abs/2506.10943) (Self-Adapting Language Models). This agent performs web research and "self-adapts" its knowledge weights using a rigorous Edit Proposal and Simulation pipeline.
 
-## Core Principles
+## Core Philosophical Alignment
 
-- **Minimal Surface Area**: No overengineering, no noise.
-- **Local-First**: Inference and data generation happen on-device (RTX 4050 6GB compatible).
-- **Manual Control**: Training is an explicit, manual batch-process—no hidden background loops.
-- **Reproducible State**: Deterministic training and predictable adapter loading.
+- **Edit vs Data**: We do not ingest raw data. We propose **Intent-Driven Edits**.
+- **Shadow Inference**: Every edit is **Simulated** (base vs proposed) to ensure impact.
+- **Budgeted Learning**: weight updates are throttled by a **Learning Ledger**.
+- **Sparse Updates**: Only impactful, low-risk, high-confidence knowledge reaches the model weights.
 
-## Architecture
+## System Architecture
 
 - **Research LLM**: Llama 3.1 8B (via Ollama)
-- **Training Base Model**: Llama 3.2 3B Instruct (via Unsloth/HuggingFace)
-- **Fine-Tuning**: LoRA (4-bit quantization)
-- **Web Search**: Tavily Search API
+- **Base Model (Weights)**: Llama 3.2 3B Instruct
+- **Adaptation**: PEFT LoRA (4-bit quantization)
+- **Edit Simulation**: Shadow inference verifies knowledge impact before persistence.
 
 ## Repository Structure
 
 ```
 seal-agent/
-├── research_agent.py      # Entry point: Web search + Answer synthesis
-├── tuner.py               # LoRA fine-tuning script (Manual entry)
-├── inference_adapter.py   # Logic for loading fine-tuned adapters
-├── self_editor/           # Core logic: generate, validate, review edits
-├── data/                  # Local training data (JSONL)
-└── adapters/              # Saved LoRA checkpoints
+├── research_agent.py      # Research flow -> Edit Proposal -> Simulation
+├── tuner.py               # Managed Training: respect budget/simulation gates
+├── inference_adapter.py   # State-aware loading of fine-tuned knowledge
+├── self_editor/
+│   ├── propose_edit.py    # SEAL EditProposal abstraction
+│   ├── simulate_edit.py   # Shadow Inference verifying impact
+│   └── save.py            # Persistence & Ledger management
+└── data/
+    ├── edit_ledger.json    # Learning budget, risk thresholds, and stats
+    └── edit_proposals.jsonl # Structured edits (pending/applied)
 ```
 
 ## Setup
@@ -41,15 +45,30 @@ seal-agent/
 
 ## Usage Workflow
 
-1. **Research & Collect**:
-   Run the agent to collect knowledge for your dataset.
+1. **Research & Propose**:
+
    ```bash
    python research_agent.py
    ```
-2. **Train (Manual Batch)**:
-   Once you have enough data (threshold: 10 edits), update the model weights.
+
+   The agent will identify knowledge gaps, propose an edit, and run a **Shadow Inference Simulation**. Only impactful edits are saved to the ledger.
+
+2. **Managed Training**:
+
    ```bash
    python tuner.py
    ```
-3. **Internalize**:
-   The agent automatically detects and loads the latest adapter from `adapters/lora_adapter` on next run.
+
+   Filters and trains only on approved proposals while respecting the `risk_threshold` and `current_budget` in `data/edit_ledger.json`.
+
+3. **Inference**:
+   The agent automatically detects and loads the latest adapter weights.
+
+## Learning Ledger (`data/edit_ledger.json`)
+
+You can manually adjust the following constraints:
+
+- `current_budget`: Max number of edits allowed in the current cycle.
+- `risk_threshold`: Max risk score for an edit to be trained.
+- `min_confidence`: Min confidence score for an edit to be accepted.
+- `total_edits_applied`: Tracks cumulative learning progress.

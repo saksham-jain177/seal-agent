@@ -28,6 +28,53 @@ def _save_index(index: Dict[str, bool]) -> None:
     with open(INDEX_PATH, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
 
+def append_edit_proposal(proposal: Dict) -> Tuple[str, bool]:
+    """
+    Appends a new EditProposal to the ledger file after checking for duplicates.
+    """
+    os.makedirs(os.path.dirname(PROPOSALS_PATH), exist_ok=True)
+    
+    # Simple deduplication based on Q/A content hash
+    content = f"{proposal['proposed_q']}|{proposal['proposed_a']}".encode('utf-8')
+    proposal_id = hashlib.sha256(content).hexdigest()
+    
+    # Check for existing
+    if os.path.exists(PROPOSALS_PATH):
+        with open(PROPOSALS_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        existing = json.loads(line)
+                        existing_content = f"{existing['proposed_q']}|{existing['proposed_a']}".encode('utf-8')
+                        if hashlib.sha256(existing_content).hexdigest() == proposal_id:
+                            return PROPOSALS_PATH, False
+                    except:
+                        continue
+
+    with open(PROPOSALS_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(proposal) + "\n")
+    
+    # Update ledger count
+    if os.path.exists(LEDGER_PATH):
+        with open(LEDGER_PATH, "r", encoding="utf-8") as f:
+            ledger = json.load(f)
+        ledger["total_edits_proposed"] = ledger.get("total_edits_proposed", 0) + 1
+        with open(LEDGER_PATH, "w", encoding="utf-8") as f:
+            json.dump(ledger, f, indent=2)
+            
+    return PROPOSALS_PATH, True
+
+def update_ledger_applied_count(count: int):
+    """Updates the ledger with the number of edits applied during a training run."""
+    if os.path.exists(LEDGER_PATH):
+        with open(LEDGER_PATH, "r", encoding="utf-8") as f:
+            ledger = json.load(f)
+        ledger["total_edits_applied"] = ledger.get("total_edits_applied", 0) + count
+        ledger["last_training_timestamp"] = datetime.utcnow().isoformat() + "Z"
+        ledger["adapter_version"] = ledger.get("adapter_version", 1) + 1
+        with open(LEDGER_PATH, "w", encoding="utf-8") as f:
+            json.dump(ledger, f, indent=2)
+
 def append_self_edit(edit: Dict[str, str]) -> Tuple[str, bool]:
     """
     Append a validated self-edit to the JSONL file.
@@ -45,7 +92,7 @@ def append_self_edit(edit: Dict[str, str]) -> Tuple[str, bool]:
         "question": edit["question"],
         "answer": edit["answer"],
         "source": edit.get("source", "unknown"),
-        "created_at": __import__("datetime").datetime.utcnow().isoformat() + "Z"
+        "created_at": datetime.utcnow().isoformat() + "Z"
     }
 
     # Append line
