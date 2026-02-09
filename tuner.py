@@ -123,12 +123,24 @@ def main():
     os.makedirs(ADAPTER_OUTPUT_DIR, exist_ok=True)
 
     print(f"[INFO] Loading model: {args.model}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=False)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model, 
+            use_fast=True, # Fast tokenizer is usually better for Llama-3
+            trust_remote_code=True
+        )
+    except Exception as e:
+        print(f"[ERROR] AutoTokenizer.from_pretrained failed: {e}")
+        # Fallback to local files if any, or raise
+        return
+
+    if tokenizer is None or isinstance(tokenizer, bool):
+        print(f"[ERROR] AutoTokenizer returned invalid object: {tokenizer}")
+        return
+
+    # Standard Llama-3 padding setup
     if tokenizer.pad_token is None:
-        if tokenizer.eos_token:
-            tokenizer.pad_token = tokenizer.eos_token
-        else:
-            tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        tokenizer.pad_token = tokenizer.eos_token
     
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
