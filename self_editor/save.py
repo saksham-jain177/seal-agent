@@ -1,12 +1,14 @@
-# self_editor/save.py
 import json
 import os
 import hashlib
+from datetime import datetime
 from typing import Dict, Tuple
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 OUT_PATH = os.path.join(DATA_DIR, "self_edits.jsonl")
-INDEX_PATH = os.path.join(DATA_DIR, "self_edits_index.json")  # small dedupe index
+PROPOSALS_PATH = os.path.join(DATA_DIR, "edit_proposals.jsonl")
+LEDGER_PATH = os.path.join(DATA_DIR, "edit_ledger.json")
+INDEX_PATH = os.path.join(DATA_DIR, "self_edits_index.json")
 
 def _hash_edit(edit: Dict[str, str]) -> str:
     """Deterministic hash of question+answer for simple dedupe."""
