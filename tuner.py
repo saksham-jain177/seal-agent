@@ -108,7 +108,8 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(DATA_PATH):
-        raise FileNotFoundError(f"Dataset not found at {DATA_PATH}")
+        print(f"[SKIP] No dataset found at {DATA_PATH}. Run 'python research_agent.py' to collect impactful edits first.")
+        return
     
     # Check if we should train
     if not args.force:
