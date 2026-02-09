@@ -8,17 +8,28 @@ from self_editor.propose_edit import propose_edit
 from self_editor.simulate_edit import simulate_edit
 from self_editor.save import append_edit_proposal
 from inference_adapter import is_adapter_available, generate_with_adapter
+from langchain_community.tools import DuckDuckGoSearchRun
 
 
 def main():
     # 1. Load Environment
     load_dotenv()
-    if not os.getenv("TAVILY_API_KEY"):
-        raise ValueError("TAVILY_API_KEY not found in .env file.")
-    print("Environment loaded.")
-
     # 2. Initialize Tools
-    search = TavilySearch(max_results=3)
+    truth_source = os.getenv("TRUTH_SOURCE", "ddg").lower()
+    
+    if truth_source == "tavily":
+        if not os.getenv("TAVILY_API_KEY"):
+            print("[WARNING] TAVILY_API_KEY not found. Falling back to DuckDuckGo.")
+            search_tool = DuckDuckGoSearchRun()
+            truth_source = "ddg"
+        else:
+            search_tool = TavilySearch(max_results=3)
+    else:
+        search_tool = DuckDuckGoSearchRun()
+        truth_source = "ddg"
+
+    print(f"[INFO] Using {truth_source.upper()} as the truth source.")
+    
     llm = ChatOllama(model="llama3.1:8b-instruct-q4_K_M", temperature=0)
     
     # Check if fine-tuned adapter is available
@@ -30,8 +41,13 @@ def main():
 
     # 3. Ask User Question
     question = input("\n> Enter your research question: ")
-    print("Searching web...")
-    search_results = search.invoke({"query": question})
+    print(f"Searching web via {truth_source.upper()}...")
+    
+    if truth_source == "tavily":
+        search_results = search_tool.invoke({"query": question})
+    else:
+        # DDG returns a string directly
+        search_results = search_tool.invoke(question)
 
     # 4. Prepare Prompt
     prompt = ChatPromptTemplate.from_template("""

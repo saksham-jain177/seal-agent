@@ -1,18 +1,30 @@
-from typing import Tuple
+from typing import Tuple, Optional
 from langchain_ollama.chat_models import ChatOllama
 from self_editor.propose_edit import EditProposal
+from inference_adapter import generate_with_adapter
 
 def simulate_edit(proposal: EditProposal, llm: ChatOllama) -> Tuple[bool, str]:
     """
     Performs 'Shadow Inference' to verify if the proposed edit is impactful.
-    Compares the base model's current knowledge with the proposed change.
+    Queries the 3B Learner model (via adapter) to check for current knowledge.
     
     Returns (simulation_passed, reason)
     """
-    # 1. Query the model without the edit
-    print(f"[Simulator] Querying base model for: {proposal.proposed_q}")
-    base_response = llm.invoke(proposal.proposed_q).content.strip()
-    print(f"[Simulator] Base model response: \"{base_response[:100]}...\"")
+    # 1. Query the specialized 3B model (Learner) without the new edit
+    print(f"[Simulator] Querying 3B Learner model for: {proposal.proposed_q}")
+    
+    # We use high temperature for 'diversity check' or low for 'fact check'
+    base_response = generate_with_adapter(
+        f"Question: {proposal.proposed_q}\nAnswer:", 
+        max_length=200, 
+        temperature=0.1
+    )
+    
+    if not base_response:
+        # Fallback/Error handling if adapter fails to load
+        base_response = "I don't know."
+        
+    print(f"[Simulator] 3B Learner response: \"{base_response[:100]}...\"")
     
     # 2. Use the LLM to compare current knowledge vs proposed knowledge
     comparison_prompt = f"""
