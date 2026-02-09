@@ -6,9 +6,20 @@ This allows the research agent to benefit from continual learning.
 """
 import os
 import torch
+import warnings
+import logging
 from typing import Optional, Tuple
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
+
+# ---- Silence Noisy Logs ----
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("peft").setLevel(logging.ERROR)
 
 # Configuration (matches tuner.py)
 BASE_MODEL = "unsloth/Llama-3.2-3B-Instruct"
