@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments,
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
 
 import argparse
+from datetime import datetime
 
 # ---- Configuration ----
 # Default to Llama-3.2-3B for 6GB VRAM compatibility
@@ -238,7 +239,7 @@ def main():
         "max_steps": MAX_STEPS,
         "num_edits_used": num_applied,
         "adapter_dir": ADAPTER_OUTPUT_DIR,
-        "timestamp": str(torch.utils.benchmark.utils.common.datetime.datetime.now())
+        "timestamp": datetime.now().isoformat()
     }
     with open(os.path.join(ADAPTER_OUTPUT_DIR, "adapter_meta.json"), "w") as f:
         json.dump(metadata, f, indent=2)
