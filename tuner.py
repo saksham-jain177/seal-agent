@@ -77,16 +77,9 @@ def tokenize(examples, tokenizer):
     prompts = examples["prompt"]
     responses = examples["response"]
     
-    inputs = tokenizer(
-        prompts,
-        add_special_tokens=True,
-        truncation=True,
-        max_length=512,
-        padding=False # We will pad manually/via collator if needed, but here we do it simple
-    )
-    
-    # Now tokenized the FULL thing (Prompt + Response)
+    # Combined: Prompt + Answer + EOS
     combined_texts = [p + " " + r + tokenizer.eos_token for p, r in zip(prompts, responses)]
+    
     full_tokens = tokenizer(
         combined_texts,
         add_special_tokens=True,
@@ -97,16 +90,22 @@ def tokenize(examples, tokenizer):
     
     labels = []
     for i, prompt in enumerate(prompts):
-        # Find where the prompt ends
-        prompt_len = len(tokenizer.encode(prompt, add_special_tokens=True))
-        label = full_tokens["input_ids"][i].copy()
-        # Mask the prompt part with -100
-        label[:prompt_len] = [-100] * prompt_len
-        # Also mask padding
-        padding_start = (full_tokens["attention_mask"][i] == 0).nonzero()
-        if len(padding_start) > 0:
-            idx = padding_start[0].item()
-            label[idx:] = [-100] * (512 - idx)
+        # Encode prompt alone to find length
+        # We use the same encoding settings as the full text
+        prompt_ids = tokenizer.encode(prompt, add_special_tokens=True)
+        prompt_len = len(prompt_ids)
+        
+        label = list(full_tokens["input_ids"][i])
+        
+        # Mask prompt: everything up to prompt_len is -100
+        # We use -100 because CrossEntropyLoss ignores it
+        for j in range(len(label)):
+            if j < prompt_len:
+                label[j] = -100
+            # Also mask padding tokens
+            if full_tokens["attention_mask"][i][j] == 0:
+                label[j] = -100
+                
         labels.append(label)
         
     full_tokens["labels"] = labels
@@ -264,22 +263,26 @@ def main():
     num_applied = len(dataset)
     update_ledger_applied_count(num_applied)
     
-    # Mark edits as applied in PROPOSALS_PATH (rewriting for simplicity in this minimal scale)
+    # Mark edits as applied in PROPOSALS_PATH
     if os.path.exists(DATA_PATH):
         temp_data = []
-        with open(DATA_PATH, "r") as f:
+        with open(LEDGER_PATH, "r") as f:
+            ledger = json.load(f)
+        r_thresh = ledger.get("risk_threshold", 0.4)
+        m_conf = ledger.get("min_confidence", 0.7)
+
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
             for line in f:
+                if not line.strip(): continue
                 e = json.loads(line)
-                # This is a bit simplistic; in a larger system we'd use IDs
-                # But here we'll just mark the ones that passed the filter
                 if (e.get("simulation_passed") and 
                     not e.get("applied") and
-                    e.get("risk_score", 1.0) <= 0.4 and # Hardcoded to match ledger default for now
-                    e.get("confidence", 0.0) >= 0.7):
+                    e.get("risk_score", 1.0) <= r_thresh and
+                    e.get("confidence", 0.0) >= m_conf):
                     e["applied"] = True
                 temp_data.append(e)
         
-        with open(DATA_PATH, "w") as f:
+        with open(DATA_PATH, "w", encoding="utf-8") as f:
             for e in temp_data:
                 f.write(json.dumps(e) + "\n")
 
