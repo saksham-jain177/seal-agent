@@ -154,10 +154,25 @@ def main():
     adapter_exists = os.path.exists(os.path.join(ADAPTER_OUTPUT_DIR, "adapter_model.safetensors"))
     
     if adapter_exists:
-        print(f"[INFO] Loading existing adapter from {ADAPTER_OUTPUT_DIR} for continued training...")
-        model = prepare_model_for_kbit_training(model)
-        model = PeftModel.from_pretrained(model, ADAPTER_OUTPUT_DIR)
-        print("[INFO] Adapter loaded. Continuing training with new data...")
+        try:
+            with open(os.path.join(ADAPTER_OUTPUT_DIR, "adapter_config.json"), "r") as f:
+                config = json.load(f)
+            
+            # Check for model mismatch
+            saved_base = config.get("base_model_name_or_path", "")
+            if saved_base and saved_base != args.model:
+                print(f"[WARNING] Existing adapter was trained on {saved_base}, but you are using {args.model}.")
+                print(f"[ACTION] Please delete the '{ADAPTER_OUTPUT_DIR}' folder to start fresh with the new architecture.")
+                return
+
+            print(f"[INFO] Loading existing adapter from {ADAPTER_OUTPUT_DIR} for continued training...")
+            model = prepare_model_for_kbit_training(model)
+            model = PeftModel.from_pretrained(model, ADAPTER_OUTPUT_DIR)
+            print("[INFO] Adapter loaded. Continuing training with new data...")
+        except Exception as e:
+            print(f"[ERROR] Could not load existing adapter: {e}")
+            print(f"[ACTION] The adapter might be corrupted or from a different version. Delete '{ADAPTER_OUTPUT_DIR}' to reset.")
+            return
     else:
         print("[INFO] No existing adapter found. Starting fresh training...")
         model = prepare_model_for_kbit_training(model)
