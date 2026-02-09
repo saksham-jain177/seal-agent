@@ -74,16 +74,43 @@ def load_dataset(path):
 
 # ---- Tokenization ----
 def tokenize(examples, tokenizer):
-    combined = [p + " " + r for p, r in zip(examples["prompt"], examples["response"])]
-    tokens = tokenizer(
-        combined,
+    prompts = examples["prompt"]
+    responses = examples["response"]
+    
+    inputs = tokenizer(
+        prompts,
+        add_special_tokens=True,
         truncation=True,
-        padding="max_length",
         max_length=512,
-        return_tensors="pt"
+        padding=False # We will pad manually/via collator if needed, but here we do it simple
     )
-    tokens["labels"] = tokens["input_ids"].clone()
-    return tokens
+    
+    # Now tokenized the FULL thing (Prompt + Response)
+    combined_texts = [p + " " + r + tokenizer.eos_token for p, r in zip(prompts, responses)]
+    full_tokens = tokenizer(
+        combined_texts,
+        add_special_tokens=True,
+        truncation=True,
+        max_length=512,
+        padding="max_length"
+    )
+    
+    labels = []
+    for i, prompt in enumerate(prompts):
+        # Find where the prompt ends
+        prompt_len = len(tokenizer.encode(prompt, add_special_tokens=True))
+        label = full_tokens["input_ids"][i].copy()
+        # Mask the prompt part with -100
+        label[:prompt_len] = [-100] * prompt_len
+        # Also mask padding
+        padding_start = (full_tokens["attention_mask"][i] == 0).nonzero()
+        if len(padding_start) > 0:
+            idx = padding_start[0].item()
+            label[idx:] = [-100] * (512 - idx)
+        labels.append(label)
+        
+    full_tokens["labels"] = labels
+    return full_tokens
 
 # ---- Incremental Training Check ----
 def should_train(min_new_edits: int = MIN_NEW_EDITS_FOR_TRAINING) -> Tuple[bool, int]:
@@ -200,16 +227,27 @@ def main():
         model = get_peft_model(model, lora_cfg)
 
     dataset = load_dataset(DATA_PATH)
+    if len(dataset) == 0:
+        print("[SKIP] No new edits to train.")
+        return
+
     tokenized = dataset.map(lambda x: tokenize(x, tokenizer), batched=True, remove_columns=dataset.column_names)
+
+    # Optimization: If dataset is smaller than the accumulation target, lower it
+    # to ensure the model actually takes optimizer steps.
+    grad_acc = 4
+    if len(dataset) < 8:
+        grad_acc = 1
+        print(f"[INFO] Small dataset ({len(dataset)} examples). Reducing gradient accumulation to 1.")
 
     training_args = TrainingArguments(
         per_device_train_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=4,
-        warmup_steps=5,
+        gradient_accumulation_steps=grad_acc,
+        warmup_steps=2, # Reduced for small data
         max_steps=MAX_STEPS,
-        num_train_epochs=EPOCHS,
+        num_train_epochs=5, # Higher epochs for very small data to ensure convergence
         learning_rate=LR,
-        logging_steps=5,
+        logging_steps=1, # More frequent logging for small data
         output_dir=ADAPTER_OUTPUT_DIR,
         save_strategy="no",  # Save manually at the end
         report_to="none",
