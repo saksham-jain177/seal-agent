@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 from datetime import datetime, timedelta
+from typing import Optional
 from dotenv import load_dotenv
 from langchain_tavily import TavilySearch
 from langchain_ollama.chat_models import ChatOllama
