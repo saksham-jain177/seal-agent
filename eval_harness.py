@@ -60,14 +60,19 @@ def run_evaluation():
             elif current_hash == pre_hash:
                 print("    Result: ❌ REGRESSION (Model reverted to pre-adapter behavior)")
                 regressions += 1
-            # 3. Fuzzy match (Heuristic)
+            # 3. String Overlap Match (Improved Heuristic)
             else:
                 target = e.get("proposed_a", "")
-                if any(word.lower() in response.lower() for word in target.split()[:5]):
+                target_words = set(target.lower().split())
+                resp_words = set(response.lower().split())
+                unique_overlap = target_words.intersection(resp_words)
+                
+                # Require substantial overlap: at least 4 distinct words or 30% of target unique words
+                if len(unique_overlap) >= 4 or (len(target_words) > 0 and (len(unique_overlap) / len(target_words)) > 0.3):
                     print("    Result: ⚠️ PARTIAL (Hash mismatch, but content likely correct)")
                     passed += 1
                 else:
-                    print("    Result: ‼️ FAILED (Unexpected behavior change)")
+                    print(f"    Result: ‼️ FAILED (Hallucination detected. Overlap: {len(unique_overlap)} words)")
                     regressions += 1
 
     if total > 0:

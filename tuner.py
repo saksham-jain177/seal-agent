@@ -232,11 +232,12 @@ def main():
     else:
         print("[INFO] No existing adapter found. Starting fresh training...")
         model = prepare_model_for_kbit_training(model)
+        # Bumping rank and alpha for "Deep SEAL" learning to override hallucinations (Harden Plan v3)
         lora_cfg = LoraConfig(
-            r=8,  # Reduced from 16 for faster training (less parameters)
-            lora_alpha=16,  # Reduced proportionally
-            target_modules=["q_proj", "v_proj"],
-            lora_dropout=0.05,
+            r=32, 
+            lora_alpha=64, 
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            lora_dropout=0.1,
             bias="none",
             task_type="CAUSAL_LM"
         )
@@ -256,19 +257,25 @@ def main():
         grad_acc = 1
         print(f"[INFO] Small dataset ({len(dataset)} examples). Reducing gradient accumulation to 1.")
 
+    # GPU Support Check for bf16
+    has_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+
     training_args = TrainingArguments(
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=grad_acc,
-        warmup_steps=5, 
-        max_steps=60, # Increased for better convergence
-        num_train_epochs=10, 
-        learning_rate=LR,
-        logging_steps=1, 
-        fp16=True, # Enable fp16 for better precision/stability in 4-bit
+        warmup_steps=2,
+        max_steps=-1,
+        num_train_epochs=5,  # Increased to 5 for deeper learning
+        learning_rate=2e-4,
+        fp16=not has_bf16,
+        bf16=has_bf16,
+        logging_steps=1,
+        optim="adamw_torch",
+        save_strategy="no",
         output_dir=ADAPTER_OUTPUT_DIR,
-        save_strategy="no",  
         report_to="none",
-        dataloader_num_workers=0  
+        gradient_checkpointing=True,
+        dataloader_num_workers=0
     )
 
     trainer = Trainer(model=model, args=training_args, train_dataset=tokenized)

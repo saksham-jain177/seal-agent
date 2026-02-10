@@ -59,17 +59,19 @@ def propose_edit(topic: str, context: str, llm: ChatOllama) -> Optional[EditProp
     Topic: {topic}
     Context: {context}
     
-    Your goal is to identify a specific fact or relationship that is missing or could be clarified.
-    You must propose an edit that results in an explicit behavior change.
+    Your goal is to identify the core identity and key distinguishing features of the subject.
+    Avoid niche architectural details unless you first establish exactly what the subject IS.
+    
+    CRITICAL RULE: The question (proposed_q) must be an "Identity Anchor" (e.g., 'What is X?' or 'Define X and its primary purpose').
     
     Respond strictly in JSON format:
     {{
-      "intent": "Explicit behavior change goal (e.g., 'Correct attribution of X to Y')",
+      "intent": "Identity Anchor (e.g., 'Define VL-JEPA as a video-language architecture')",
       "evidence": ["url1", "Snippet summary"],
-      "expected_delta": "Exactly how the model's output should change after this edit.",
-      "proposed_q": "The factual question to train on",
-      "proposed_a": "The accurate answer to train on",
-      "knowledge_gap": "Analysis of what the base model currently lacks",
+      "expected_delta": "The model should identify X as Y instead of hallucinating it as Z.",
+      "proposed_q": "What is [Subject] and what is its primary function?",
+      "proposed_a": "Clear, concise definition and purpose based on evidence.",
+      "knowledge_gap": "Analysis of why the base model is likely to confuse this specific subject.",
       "confidence": 0.0 to 1.0,
       "risk": "low|medium|high"
     }}
