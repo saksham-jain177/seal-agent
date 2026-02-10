@@ -3,6 +3,8 @@ import json
 import torch
 import warnings
 import logging
+import random
+import numpy as np
 from typing import Tuple
 from datasets import Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer
@@ -10,6 +12,17 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, Pe
 
 import argparse
 from datetime import datetime
+
+# ---- Deterministic Compilation (Hardening v2.1) ----
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)
 
 # ---- Silence Noisy Logs ----
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -54,6 +67,9 @@ def load_dataset(path):
 
     with open(path, "r", encoding="utf-8") as f:
         entries = [json.loads(line) for line in f if line.strip()]
+    
+    # Deterministic Data Ordering (Hardening v2.1)
+    entries.sort(key=lambda x: x.get("created_at", x.get("timestamp", "")))
     
     pairs = []
     ready_to_apply = 0
