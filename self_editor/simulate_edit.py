@@ -57,43 +57,49 @@ def simulate_edit(proposal: EditProposal, llm: ChatOllama) -> SimulationResult:
 
     # 2. Identity Guard (Phase 8: Systematic Grounding)
     # Extract subject to check core identity grounding
-    subject_prompt = f"Identify the primary subject of this proposal in 1-3 words: {proposal.proposed_q}"
-    subject = llm.invoke(subject_prompt).content.strip().strip("'\"")
-    
-    print(f"[Simulator] Grounding Query for Subject: {subject}")
-    grounding_response = generate_with_adapter(
-        f"Question: What is {subject} and what is its primary function?\nAnswer:",
-        max_length=150,
-        temperature=0.0 # Deterministic grounding
-    )
-    
-    identity_check_prompt = f"""
-    You are a SEAL Identity Auditor.
-    Subject: {subject}
-    Student's Identity Knowledge: {grounding_response}
-    Proposed Knowledge (Target): {proposal.proposed_a}
-    
-    TASK: Does the Student's current response for the subject's identity fundamentally mismatchreality?
-    Example Mismatch: Calling an AI model "health insurance" or a "virus".
-    
-    Respond strictly in JSON:
-    {{
-      "identity_mismatch": bool,
-      "reasoning": "Brief explanation"
-    }}
-    """
-    
+    is_anchor = "Identity Anchor" in proposal.intent
     identity_mismatch = False
-    try:
-        identity_resp = llm.invoke(identity_check_prompt).content.strip()
-        start = identity_resp.find("{")
-        end = identity_resp.rfind("}") + 1
-        identity_data = json.loads(identity_resp[start:end])
-        identity_mismatch = identity_data.get("identity_mismatch", False)
-        if identity_mismatch:
-            print(f"[Simulator] ‼️ IDENTITY MISMATCH DETECTED: {identity_data.get('reasoning')}")
-    except Exception as e:
-        print(f"[Simulator] Identity Check Error: {e}")
+    
+    if not is_anchor:
+        subject_prompt = f"Identify the primary subject of this proposal in 1-3 words: {proposal.proposed_q}"
+        subject_resp = llm.invoke(subject_prompt).content.strip().strip("'\"")
+        subject = subject_resp
+        
+        print(f"[Simulator] Grounding Query for Subject: {subject}")
+        grounding_response = generate_with_adapter(
+            f"Question: What is {subject} and what is its primary function?\nAnswer:",
+            max_length=150,
+            temperature=0.0 # Deterministic grounding
+        )
+        
+        identity_check_prompt = f"""
+        You are a SEAL Identity Auditor.
+        Subject: {subject}
+        Student's Identity Knowledge: {grounding_response}
+        Proposed Knowledge (Target): {proposal.proposed_a}
+        
+        TASK: Does the Student's current response for the subject's identity fundamentally mismatchreality?
+        Example Mismatch: Calling an AI model "health insurance" or a "virus".
+        
+        Respond strictly in JSON:
+        {{
+          "identity_mismatch": bool,
+          "reasoning": "Brief explanation"
+        }}
+        """
+        
+        try:
+            identity_resp = llm.invoke(identity_check_prompt).content.strip()
+            start = identity_resp.find("{")
+            end = identity_resp.rfind("}") + 1
+            identity_data = json.loads(identity_resp[start:end])
+            identity_mismatch = identity_data.get("identity_mismatch", False)
+            if identity_mismatch:
+                print(f"[Simulator] ‼️ IDENTITY MISMATCH DETECTED: {identity_data.get('reasoning')}")
+        except Exception as e:
+            print(f"[Simulator] Identity Check Error: {e}")
+    else:
+        print("[Simulator] Identity Anchor detected. Skipping Identity Guard (Grounding Phase).")
 
     # 3. Comparison & Auditing
     comparison_prompt = f"""
@@ -127,6 +133,7 @@ def simulate_edit(proposal: EditProposal, llm: ChatOllama) -> SimulationResult:
         eval_data = json.loads(json_text)
         
         passed = eval_data.get("simulation_passed", False)
+        print(f"[Simulator] Audit Result: {'PASS' if passed else 'FAIL'} - {eval_data.get('notes')}")
         
         # Enforce global contract rules
         if identity_mismatch:
@@ -136,10 +143,8 @@ def simulate_edit(proposal: EditProposal, llm: ChatOllama) -> SimulationResult:
             passed = False
             eval_data["notes"] = f"Global Gate: Rejected due to {proposal.risk} risk / low confidence."
 
-        # If hashes are identical, no behavior change is possible
-        if base_hash == sim_hash:
-            passed = False
-            eval_data["notes"] = "Trivial: Proposal is identical to current model behavior."
+        if not passed:
+            print(f"[Simulator] ❌ Enforced Rejection: {eval_data['notes']}")
 
         return SimulationResult(
             proposal_id=proposal.id,

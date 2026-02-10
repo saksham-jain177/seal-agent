@@ -63,15 +63,16 @@ def propose_edit(topic: str, context: str, llm: ChatOllama) -> Optional[EditProp
     Avoid niche architectural details unless you first establish exactly what the subject IS.
     
     CRITICAL RULE: The question (proposed_q) must be an "Identity Anchor" (e.g., 'What is X?' or 'Define X and its primary purpose').
+    The 'intent' field must clearly state that this is an identity anchoring edit for the specific subject.
     
     Respond strictly in JSON format:
     {{
-      "intent": "Identity Anchor (e.g., 'Define VL-JEPA as a video-language architecture')",
+      "intent": "Identity Anchor: [Subject Name]",
       "evidence": ["url1", "Snippet summary"],
-      "expected_delta": "The model should identify X as Y instead of hallucinating it as Z.",
+      "expected_delta": "The model should identify [Subject] correctly instead of hallucinating.",
       "proposed_q": "What is [Subject] and what is its primary function?",
-      "proposed_a": "Clear, concise definition and purpose based on evidence.",
-      "knowledge_gap": "Analysis of why the base model is likely to confuse this specific subject.",
+      "proposed_a": "Concise definition based on evidence.",
+      "knowledge_gap": "Why the base model is likely to fail.",
       "confidence": 0.0 to 1.0,
       "risk": "low|medium|high"
     }}

@@ -55,42 +55,38 @@ def save_to_cache(query: str, results: str):
     with open(CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)
 
-def main():
-    load_dotenv()
-    init_ledger_if_needed(budget=100)
-    
-    truth_source = os.getenv("TRUTH_SOURCE", "ddg").lower()
-    llm = ChatOllama(model="llama3.1:8b-instruct-q4_K_M", temperature=0)
-
-    print(f"[INFO] SEAL Agent active. Mode: Research & Audit.")
-
-    # Research Phase
-    query = input("\n> Research Query: ")
-    
-    # 1. Check Cache (Contract Rule Phase 7)
+def perform_research(query: str, truth_source: str, llm: ChatOllama) -> str:
+    """Handles the retrieval and summarization of truth data."""
     cached = get_cached_results(query)
     if cached:
         print("[INFO] Loading from Research Cache...")
-        search_results = cached
-    else:
-        print(f"Searching {truth_source.upper()}...")
-        if truth_source == "arxiv":
-            import arxiv
-            search = arxiv.Search(query=query, max_results=3, sort_by=arxiv.SortCriterion.Relevance)
-            results = []
-            for result in search.results():
-                results.append(f"Title: {result.title}\nAbstract: {result.summary}\nURL: {result.entry_id}")
-            search_results = "\n\n".join(results)
-        elif truth_source == "tavily" and os.getenv("TAVILY_API_KEY"):
-            search_tool = TavilySearch(max_results=3)
-            search_results = str(search_tool.invoke(query))
-        else:
-            search_tool = DuckDuckGoSearchRun()
-            search_results = str(search_tool.invoke(query))
-        
-        save_to_cache(query, search_results)
+        return cached
 
-    # 2. Decision Phase
+    print(f"Searching {truth_source.upper()}...")
+    if truth_source == "arxiv":
+        import arxiv
+        search = arxiv.Search(query=query, max_results=3, sort_by=arxiv.SortCriterion.Relevance)
+        results = [f"Title: {r.title}\nAbstract: {r.summary}\nURL: {r.entry_id}" for r in search.results()]
+        search_results = "\n\n".join(results)
+    elif truth_source == "tavily" and os.getenv("TAVILY_API_KEY"):
+        from langchain_tavily import TavilySearch
+        search_tool = TavilySearch(max_results=3)
+        search_results = str(search_tool.invoke(query))
+    else:
+        from langchain_community.tools import DuckDuckGoSearchRun
+        search_tool = DuckDuckGoSearchRun()
+        search_results = str(search_tool.invoke(query))
+    
+    save_to_cache(query, search_results)
+    return search_results
+
+def run_audit_loop(query: str, search_results: str, llm: ChatOllama, truth_source: str, depth: int = 0):
+    """Orchestrates the SEAL audit pipeline, supporting recursive identity anchoring."""
+    if depth > 1: # Prevent infinite recursion
+        print("[SEAL] Max recursion depth reached. Skipping.")
+        return
+
+    # 1. Decision (Consensus Generation)
     prompt = ChatPromptTemplate.from_template("""
     Context: {context}
     Query: {query}
@@ -99,10 +95,11 @@ def main():
     chain = prompt | llm
     response = chain.invoke({"context": search_results, "query": query})
     
+    ans = response.content if hasattr(response, "content") else response
     print("\n--- RESEARCH SUMMARY ---")
-    print(response.content if hasattr(response, "content") else response)
+    print(ans)
     
-    # 3. SEAL Audit Pipeline
+    # 2. Audit Initiation
     print("\n[SEAL] Starting Audit Pipeline...")
     
     with open("data/edit_ledger.json", "r") as f:
@@ -123,6 +120,30 @@ def main():
         if appended: print(f"[SEAL] Audit committed to: {path}")
     else:
         print(f"❌ REJECTED Audit: {sim_result.notes}")
+        
+        # Phase 8: Automated Identity Recovery
+        if "Identity Guard" in sim_result.notes:
+            # Extract subject from notes or use proposer reasoning
+            subject_query = f"What is the primary subject of the rejected edit '{proposal.intent}'? Respond with just the name."
+            subject = llm.invoke(subject_query).content.strip()
+            
+            print(f"\n[SEAL] 🔄 IDENTITY LOOP: Piercing identity hallucination for '{subject}'...")
+            anchor_query = f"What is {subject} and what are its key technical features?"
+            anchor_research = perform_research(anchor_query, truth_source, llm)
+            run_audit_loop(anchor_query, anchor_research, llm, truth_source, depth + 1)
+
+def main():
+    load_dotenv()
+    init_ledger_if_needed(budget=100)
+    
+    truth_source = os.getenv("TRUTH_SOURCE", "ddg").lower()
+    llm = ChatOllama(model="llama3.1:8b-instruct-q4_K_M", temperature=0)
+
+    print(f"[INFO] SEAL Agent active. Mode: Research & Audit (Systematic Grounding v8).")
+
+    query = input("\n> Research Query: ")
+    search_results = perform_research(query, truth_source, llm)
+    run_audit_loop(query, search_results, llm, truth_source)
 
 if __name__ == "__main__":
     main()
