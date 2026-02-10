@@ -1,46 +1,49 @@
 import json
+import uuid
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from langchain_ollama.chat_models import ChatOllama
 
-# SEAL Semantics: Edit Proposal Schema
-# Tracks not just what to change, but why, what evidence supports it, and its risk.
+# SEAL Semantics: Edit Proposal Schema (v2 Alignment)
+# Focuses on behavior change, auditability, and clear delta expectations.
 
 class EditProposal:
     def __init__(
         self,
         intent: str,
-        knowledge_gap: str,
-        evidence: str,
+        evidence: List[str],
+        expected_delta: str,
         proposed_q: str,
         proposed_a: str,
-        source: str,
-        risk_score: float = 0.0,
-        confidence: float = 0.0
+        confidence: float,
+        risk: str,  # low|medium|high
+        knowledge_gap: Optional[str] = None
     ):
-        self.timestamp = datetime.utcnow().isoformat() + "Z"
+        self.id = str(uuid.uuid4())
+        self.created_at = datetime.utcnow().isoformat() + "Z"
         self.intent = intent
-        self.knowledge_gap = knowledge_gap
         self.evidence = evidence
+        self.expected_delta = expected_delta
         self.proposed_q = proposed_q
         self.proposed_a = proposed_a
-        self.source = source
-        self.risk_score = risk_score
         self.confidence = confidence
+        self.risk = risk
+        self.knowledge_gap = knowledge_gap
         self.simulation_passed = False
         self.applied = False
 
     def to_dict(self) -> Dict:
         return {
-            "timestamp": self.timestamp,
+            "id": self.id,
+            "created_at": self.created_at,
             "intent": self.intent,
-            "knowledge_gap": self.knowledge_gap,
             "evidence": self.evidence,
+            "expected_delta": self.expected_delta,
             "proposed_q": self.proposed_q,
             "proposed_a": self.proposed_a,
-            "source": self.source,
-            "risk_score": self.risk_score,
             "confidence": self.confidence,
+            "risk": self.risk,
+            "knowledge_gap": self.knowledge_gap,
             "simulation_passed": self.simulation_passed,
             "applied": self.applied
         }
@@ -48,6 +51,7 @@ class EditProposal:
 def propose_edit(topic: str, context: str, llm: ChatOllama) -> Optional[EditProposal]:
     """
     Generates a structured Edit Proposal based on a research topic and context.
+    Strictly adheres to SEAL-semantic contract.
     """
     prompt = f"""
     You are a SEAL Research Architect. Analyze the following context and propose a specific model edit.
@@ -56,17 +60,18 @@ def propose_edit(topic: str, context: str, llm: ChatOllama) -> Optional[EditProp
     Context: {context}
     
     Your goal is to identify a specific fact or relationship that is missing or could be clarified.
-    Propose a clear Question/Answer pair that encapsulates this knowledge.
+    You must propose an edit that results in an explicit behavior change.
     
     Respond strictly in JSON format:
     {{
-      "intent": "Why is this edit needed? (e.g., clarify X, add fact about Y)",
-      "knowledge_gap": "What exactly was missing or unclear before?",
-      "evidence": "Briefly summarize the supporting evidence from the context",
-      "proposed_q": "The factual question",
-      "proposed_a": "The accurate answer",
-      "risk_score": 0.0 to 1.0 (Low risk = fact, High risk = opinion/changing info),
-      "confidence": 0.0 to 1.0
+      "intent": "Explicit behavior change goal (e.g., 'Correct attribution of X to Y')",
+      "evidence": ["url1", "Snippet summary"],
+      "expected_delta": "Exactly how the model's output should change after this edit.",
+      "proposed_q": "The factual question to train on",
+      "proposed_a": "The accurate answer to train on",
+      "knowledge_gap": "Analysis of what the base model currently lacks",
+      "confidence": 0.0 to 1.0,
+      "risk": "low|medium|high"
     }}
     """
     
@@ -82,13 +87,13 @@ def propose_edit(topic: str, context: str, llm: ChatOllama) -> Optional[EditProp
         
         return EditProposal(
             intent=data.get("intent", ""),
-            knowledge_gap=data.get("knowledge_gap", ""),
-            evidence=data.get("evidence", ""),
+            evidence=data.get("evidence", []),
+            expected_delta=data.get("expected_delta", ""),
             proposed_q=data.get("proposed_q", ""),
             proposed_a=data.get("proposed_a", ""),
-            source=topic, # Using topic as source for now
-            risk_score=float(data.get("risk_score", 0.0)),
-            confidence=float(data.get("confidence", 0.0))
+            confidence=float(data.get("confidence", 0.0)),
+            risk=data.get("risk", "medium"),
+            knowledge_gap=data.get("knowledge_gap", "")
         )
     except Exception as e:
         print(f"[Self-Editor] Edit proposal generation failed: {e}")

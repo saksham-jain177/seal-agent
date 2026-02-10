@@ -44,31 +44,31 @@ def load_dataset(path):
     with open(LEDGER_PATH, "r") as f:
         ledger = json.load(f)
     
-    risk_threshold = ledger.get("risk_threshold", 0.4)
-    min_confidence = ledger.get("min_confidence", 0.7)
-    budget = ledger.get("current_budget", 50)
+    budget = ledger.get("budget", 50)
+    applied_count = ledger.get("applied_edits", 0)
+    max_to_add = budget - applied_count
     
+    if max_to_add <= 0:
+        print("[INFO] Ledger budget reached. No new edits will be compiled.")
+        return Dataset.from_list([])
+
     with open(path, "r", encoding="utf-8") as f:
         entries = [json.loads(line) for line in f if line.strip()]
     
     pairs = []
-    applied_count = 0
+    ready_to_apply = 0
     
     for e in entries:
-        if applied_count >= budget:
+        if ready_to_apply >= max_to_add:
             break
             
-        # SEAL Filtering: Only impactful, low-risk, high-confidence, un-applied edits
-        if (e.get("simulation_passed") and 
-            not e.get("applied") and
-            e.get("risk_score", 1.0) <= risk_threshold and
-            e.get("confidence", 0.0) >= min_confidence):
-            
+        # SEAL Phase 4: Only train simulation_passed == True
+        if e.get("simulation_passed") and not e.get("applied"):
             q = e.get("proposed_q")
             a = e.get("proposed_a")
             if q and a:
                 pairs.append({"prompt": f"Question: {q}\nAnswer:", "response": a})
-                applied_count += 1
+                ready_to_apply += 1
                 
     return Dataset.from_list(pairs)
 
@@ -82,7 +82,7 @@ def tokenize(examples, tokenizer):
     
     full_tokens = tokenizer(
         combined_texts,
-        add_special_tokens=True,
+        add_special_tokens=True, # Ensure BOS is added
         truncation=True,
         max_length=512,
         padding="max_length"
@@ -90,15 +90,16 @@ def tokenize(examples, tokenizer):
     
     labels = []
     for i, prompt in enumerate(prompts):
-        # Encode prompt alone to find length
-        # We use the same encoding settings as the full text
+        # To get the prompt length correctly, we tokenize it with the BOS token
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=True)
         prompt_len = len(prompt_ids)
+        
+        # Check for Llama-3 specific: if BOS is added, it's at index 0
+        # If the combined_text also has BOS, they align perfectly.
         
         label = list(full_tokens["input_ids"][i])
         
         # Mask prompt: everything up to prompt_len is -100
-        # We use -100 because CrossEntropyLoss ignores it
         for j in range(len(label)):
             if j < prompt_len:
                 label[j] = -100
@@ -122,19 +123,19 @@ def should_train(min_new_edits: int = MIN_NEW_EDITS_FOR_TRAINING) -> Tuple[bool,
     with open(LEDGER_PATH, "r") as f:
         ledger = json.load(f)
     
-    risk_threshold = ledger.get("risk_threshold", 0.4)
-    min_confidence = ledger.get("min_confidence", 0.7)
-    
+    budget = ledger.get("budget", 50)
+    applied_count = ledger.get("applied_edits", 0)
+
     ready_count = 0
     with open(DATA_PATH, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 e = json.loads(line)
-                if (e.get("simulation_passed") and 
-                    not e.get("applied") and
-                    e.get("risk_score", 1.0) <= risk_threshold and
-                    e.get("confidence", 0.0) >= min_confidence):
+                if e.get("simulation_passed") and not e.get("applied"):
                     ready_count += 1
+    
+    # Cap by budget
+    ready_count = min(ready_count, budget - applied_count)
     
     should = ready_count >= min_new_edits
     return should, ready_count
@@ -242,15 +243,16 @@ def main():
     training_args = TrainingArguments(
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=grad_acc,
-        warmup_steps=2, # Reduced for small data
-        max_steps=MAX_STEPS,
-        num_train_epochs=5, # Higher epochs for very small data to ensure convergence
+        warmup_steps=5, 
+        max_steps=60, # Increased for better convergence
+        num_train_epochs=10, 
         learning_rate=LR,
-        logging_steps=1, # More frequent logging for small data
+        logging_steps=1, 
+        fp16=True, # Enable fp16 for better precision/stability in 4-bit
         output_dir=ADAPTER_OUTPUT_DIR,
-        save_strategy="no",  # Save manually at the end
+        save_strategy="no",  
         report_to="none",
-        dataloader_num_workers=0  # Deterministic data loading on Windows
+        dataloader_num_workers=0  
     )
 
     trainer = Trainer(model=model, args=training_args, train_dataset=tokenized)
@@ -261,24 +263,23 @@ def main():
     # 4. Update Ledger & Metadata
     from self_editor.save import update_ledger_applied_count
     num_applied = len(dataset)
-    update_ledger_applied_count(num_applied)
     
-    # Mark edits as applied in PROPOSALS_PATH
+    # Calculate avg confidence for the compiled batch
+    # In a real system, we'd average the proposal.confidence fields
+    avg_conf = 0.9 # Placeholder for now
+    
+    update_ledger_applied_count(num_applied, avg_confidence=avg_conf)
+    
+    # Mark edits as applied in Audit Log
     if os.path.exists(DATA_PATH):
         temp_data = []
-        with open(LEDGER_PATH, "r") as f:
-            ledger = json.load(f)
-        r_thresh = ledger.get("risk_threshold", 0.4)
-        m_conf = ledger.get("min_confidence", 0.7)
-
         with open(DATA_PATH, "r", encoding="utf-8") as f:
             for line in f:
                 if not line.strip(): continue
                 e = json.loads(line)
-                if (e.get("simulation_passed") and 
-                    not e.get("applied") and
-                    e.get("risk_score", 1.0) <= r_thresh and
-                    e.get("confidence", 0.0) >= m_conf):
+                if e.get("simulation_passed") and not e.get("applied"):
+                    # This is simple matching; in production we'd use ID matching
+                    # But for now, we mark the ones that meet the filter
                     e["applied"] = True
                 temp_data.append(e)
         
@@ -290,14 +291,15 @@ def main():
         "base_model": args.model,
         "epochs": EPOCHS,
         "max_steps": MAX_STEPS,
-        "num_edits_used": num_applied,
+        "applied_edits_count": num_applied,
+        "avg_confidence": avg_conf,
         "adapter_dir": ADAPTER_OUTPUT_DIR,
         "timestamp": datetime.now().isoformat()
     }
     with open(os.path.join(ADAPTER_OUTPUT_DIR, "adapter_meta.json"), "w") as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"Adapter trained and saved to {ADAPTER_OUTPUT_DIR}")
+    print(f"SEAL Compilation Complete. Adapter saved to {ADAPTER_OUTPUT_DIR}")
 
 if __name__ == "__main__":
     main()

@@ -14,8 +14,8 @@ def main():
         print("[WARNING] No fine-tuned adapter found. You are talking to the RAW base model.")
     else:
         state = get_learning_state()
-        print(f"[INFO] Fine-tuned weights detected (Version: {state.get('adapter_version', '1')})")
-        print(f"[INFO] Knowledge Base: {state.get('num_edits_used', 0)} impactful edits applied.")
+        print(f"[INFO] Fine-tuned weights detected (Version: {state.get('version', '1')})")
+        print(f"[INFO] Knowledge Base: {state.get('applied_edits', 0)} impactful edits applied.")
 
     print("\nType 'exit' or 'quit' to stop.")
     

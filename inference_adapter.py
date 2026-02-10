@@ -5,6 +5,7 @@ Loads fine-tuned LoRA adapter and uses it for text generation.
 This allows the research agent to benefit from continual learning.
 """
 import os
+import json
 import torch
 import warnings
 import logging
@@ -148,15 +149,30 @@ def is_adapter_available(adapter_path: str = ADAPTER_PATH) -> bool:
 
 
 def get_learning_state(adapter_path: str = ADAPTER_PATH) -> dict:
-    """Retrieves the internal learning state from adapter metadata."""
+    """
+    Retrieves the internal learning state from adapter metadata.
+    Exposes compilation results (Contract Rule).
+    """
     meta_path = os.path.join(adapter_path, "adapter_meta.json")
     if os.path.exists(meta_path):
         try:
             with open(meta_path, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                return {
+                    "status": "active",
+                    "applied_edits": data.get("applied_edits_count", 0),
+                    "avg_confidence": data.get("avg_confidence", 0.0),
+                    "timestamp": data.get("timestamp"),
+                    "version": data.get("adapter_version", "unknown")
+                }
         except:
             pass
-    return {"status": "base_model", "message": "No fine-tuned adapter metadata found."}
+    return {
+        "status": "base_model", 
+        "applied_edits": 0,
+        "avg_confidence": 0.0,
+        "message": "No fine-tuned adapter metadata found."
+    }
 
 
 if __name__ == "__main__":
