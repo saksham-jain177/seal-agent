@@ -83,6 +83,7 @@ def load_dataset(path):
             q = e.get("proposed_q")
             a = e.get("proposed_a")
             if q and a:
+                # SEAL Hardening: No extra spaces between prompt/response to ensure exact alignment with chat.py
                 pairs.append({"prompt": f"Question: {q}\nAnswer:", "response": a})
                 ready_to_apply += 1
                 
@@ -93,12 +94,12 @@ def tokenize(examples, tokenizer):
     prompts = examples["prompt"]
     responses = examples["response"]
     
-    # Combined: Prompt + Answer + EOS
-    combined_texts = [p + " " + r + tokenizer.eos_token for p, r in zip(prompts, responses)]
+    # Combined: Prompt + Answer + EOS (No space between p and r for exact grounding)
+    combined_texts = [p + r + tokenizer.eos_token for p, r in zip(prompts, responses)]
     
     full_tokens = tokenizer(
         combined_texts,
-        add_special_tokens=True, # Ensure BOS is added
+        add_special_tokens=True, 
         truncation=True,
         max_length=512,
         padding="max_length"
@@ -106,7 +107,7 @@ def tokenize(examples, tokenizer):
     
     labels = []
     for i, prompt in enumerate(prompts):
-        # To get the prompt length correctly, we tokenize it with the BOS token
+        # Align masking with exact prompt length
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=True)
         prompt_len = len(prompt_ids)
         
@@ -250,23 +251,19 @@ def main():
 
     tokenized = dataset.map(lambda x: tokenize(x, tokenizer), batched=True, remove_columns=dataset.column_names)
 
-    # Optimization: If dataset is smaller than the accumulation target, lower it
-    # to ensure the model actually takes optimizer steps.
-    grad_acc = 4
-    if len(dataset) < 8:
-        grad_acc = 1
-        print(f"[INFO] Small dataset ({len(dataset)} examples). Reducing gradient accumulation to 1.")
-
+    # Optimization: For small "Identity Pillar" grounding, we want immediate optimizer steps
+    grad_acc = 1 
+    
     # GPU Support Check for bf16
     has_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
 
     training_args = TrainingArguments(
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=grad_acc,
-        warmup_steps=5,
+        warmup_steps=10,
         max_steps=-1,
-        num_train_epochs=10,  # Force deeper anchoring for Identity Pillars
-        learning_rate=1e-4,   # Slightly lower LR for better stability at high epochs
+        num_train_epochs=100, # FORCE ground-truth anchoring
+        learning_rate=1e-4,
         fp16=not has_bf16,
         bf16=has_bf16,
         logging_steps=1,
