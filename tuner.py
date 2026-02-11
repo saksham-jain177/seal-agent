@@ -263,10 +263,10 @@ def main():
     training_args = TrainingArguments(
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=grad_acc,
-        warmup_steps=2,
+        warmup_steps=5,
         max_steps=-1,
-        num_train_epochs=5,  # Increased to 5 for deeper learning
-        learning_rate=2e-4,
+        num_train_epochs=10,  # Force deeper anchoring for Identity Pillars
+        learning_rate=1e-4,   # Slightly lower LR for better stability at high epochs
         fp16=not has_bf16,
         bf16=has_bf16,
         logging_steps=1,
