@@ -162,6 +162,7 @@ def main():
     parser = argparse.ArgumentParser(description="Fine-tune the SEAL agent model.")
     parser.add_argument("--force", "-f", action="store_true", help="Force training regardless of data count.")
     parser.add_argument("--model", "-m", type=str, default=DEFAULT_MODEL, help="Base model to use for training.")
+    parser.add_argument("--resume", "-r", action="store_true", help="Resume from latest checkpoint.")
     args = parser.parse_args()
 
     if not os.path.exists(DATA_PATH):
@@ -268,15 +269,28 @@ def main():
         bf16=has_bf16,
         logging_steps=1,
         optim="adamw_torch",
-        save_strategy="no",
+        save_strategy="epoch",  # Save at every epoch for resilience
+        save_total_limit=2,     # Keep only the latest 2 checkpoints
         output_dir=ADAPTER_OUTPUT_DIR,
         report_to="none",
         gradient_checkpointing=True,
         dataloader_num_workers=0
     )
 
-    trainer = Trainer(model=model, args=training_args, train_dataset=tokenized)
-    trainer.train()
+    # Detect checkpoint for resume
+    resume_checkpoint = None
+    if args.resume or os.path.exists(os.path.join(ADAPTER_OUTPUT_DIR, "checkpoint-*")):
+        # Trainer.train(resume_from_checkpoint=True) automatically finds the latest
+        resume_checkpoint = True
+
+    trainer = Trainer(
+        model=model, 
+        args=training_args, 
+        train_dataset=tokenized
+    )
+    
+    print(f"[INFO] Starting training (Resume: {resume_checkpoint}, Epochs: 100)...")
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
     model.save_pretrained(ADAPTER_OUTPUT_DIR)
     tokenizer.save_pretrained(ADAPTER_OUTPUT_DIR)
 
