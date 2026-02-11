@@ -55,29 +55,69 @@ def save_to_cache(query: str, results: str):
     with open(CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)
 
-def perform_research(query: str, truth_source: str, llm: ChatOllama) -> str:
-    """Handles the retrieval and summarization of truth data."""
+def perform_research(query: str, truth_source: str, llm: ChatOllama, depth: int = 0) -> str:
+    """Handles the retrieval and summarization of truth data with Multi-Step Reasoning (Truth Chain)."""
+    if depth > 1: # Limit follow-up searches
+        return ""
+
+    q_hash = hashlib.sha256(query.lower().strip().encode()).hexdigest()
     cached = get_cached_results(query)
     if cached:
-        print("[INFO] Loading from Research Cache...")
-        return cached
-
-    print(f"Searching {truth_source.upper()}...")
-    if truth_source == "arxiv":
-        import arxiv
-        search = arxiv.Search(query=query, max_results=3, sort_by=arxiv.SortCriterion.Relevance)
-        results = [f"Title: {r.title}\nAbstract: {r.summary}\nURL: {r.entry_id}" for r in search.results()]
-        search_results = "\n\n".join(results)
-    elif truth_source == "tavily" and os.getenv("TAVILY_API_KEY"):
-        from langchain_tavily import TavilySearch
-        search_tool = TavilySearch(max_results=3)
-        search_results = str(search_tool.invoke(query))
+        print(f"[INFO] Loading from Research Cache (Step {depth+1})...")
+        search_results = cached
     else:
-        from langchain_community.tools import DuckDuckGoSearchRun
-        search_tool = DuckDuckGoSearchRun()
-        search_results = str(search_tool.invoke(query))
+        print(f"[Research] Search Step {depth+1}: {query} via {truth_source.upper()}")
+        if truth_source == "arxiv":
+            import arxiv
+            search = arxiv.Search(query=query, max_results=3, sort_by=arxiv.SortCriterion.Relevance)
+            results = [f"Title: {r.title}\nAbstract: {r.summary}\nURL: {r.entry_id}" for r in search.results()]
+            search_results = "\n\n".join(results)
+        elif truth_source == "tavily" and os.getenv("TAVILY_API_KEY"):
+            from langchain_tavily import TavilySearch
+            search_tool = TavilySearch(max_results=3)
+            search_results = str(search_tool.invoke(query))
+        else:
+            from langchain_community.tools import DuckDuckGoSearchRun
+            search_tool = DuckDuckGoSearchRun()
+            search_results = str(search_tool.invoke(query))
+        
+        save_to_cache(query, search_results)
+
+    # Multi-Step Reasoning (Phase 8: Advanced Search Context)
+    analysis_prompt = f"""
+    You are a SEAL Research Analyst.
+    Original Query: {query}
+    Context Found: {search_results}
     
-    save_to_cache(query, search_results)
+    TASK: Is this context sufficient to build a high-fidelity model edit?
+    Required: 
+    - Clear definition of the subject.
+    - Specific technical features or performance metrics.
+    - No significant ambiguities.
+    
+    If INSUFFICIENT, suggest a single, targeted follow-up search query to fill the gap.
+    Respond strictly in JSON:
+    {{
+      "is_sufficient": bool,
+      "follow_up_query": "string or null",
+      "reasoning": "brief explanation"
+    }}
+    """
+    
+    try:
+        resp = llm.invoke(analysis_prompt).content.strip()
+        start = resp.find("{")
+        end = resp.rfind("}") + 1
+        analysis = json.loads(resp[start:end])
+        
+        if not analysis.get("is_sufficient") and analysis.get("follow_up_query") and depth < 1:
+            follow_up = analysis["follow_up_query"]
+            print(f"[Research] 🔍 Analysis: Context insufficient. Branching to follow-up: {follow_up}")
+            follow_up_results = perform_research(follow_up, truth_source, llm, depth + 1)
+            search_results = f"{search_results}\n\n--- FOLLOW-UP RESEARCH ---\n{follow_up_results}"
+    except Exception as e:
+        print(f"[Research] Analysis error: {e}")
+
     return search_results
 
 def run_audit_loop(query: str, search_results: str, llm: ChatOllama, truth_source: str, depth: int = 0):
