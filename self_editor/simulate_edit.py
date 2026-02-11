@@ -61,9 +61,13 @@ def simulate_edit(proposal: EditProposal, llm: ChatOllama) -> SimulationResult:
     identity_mismatch = False
     
     if not is_anchor:
-        subject_prompt = f"Identify the primary subject of this proposal in 1-3 words: {proposal.proposed_q}"
-        subject_resp = llm.invoke(subject_prompt).content.strip().strip("'\"")
-        subject = subject_resp
+        try:
+            subject_prompt = f"Identify the primary subject of this proposal in 1-3 words: {proposal.proposed_q}"
+            subject_resp = llm.invoke(subject_prompt).content.strip().strip("'\"")
+            subject = subject_resp
+        except Exception as e:
+            print(f"[Simulator] Subject extraction failed: {e}")
+            subject = "Unknown Subject"
         
         print(f"[Simulator] Grounding Query for Subject: {subject}")
         grounding_response = generate_with_adapter(

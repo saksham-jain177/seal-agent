@@ -13,6 +13,16 @@ from self_editor.propose_edit import propose_edit
 from self_editor.simulate_edit import simulate_edit
 from self_editor.save import append_edit_proposal, init_ledger_if_needed
 from inference_adapter import is_adapter_available
+import time
+
+def check_ollama_availability(llm):
+    """Fast check to see if Ollama is responsive."""
+    try:
+        llm.invoke("test")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Ollama connection failed. Is it running? Error: {e}")
+        return False
 
 CACHE_PATH = "data/research_cache.json"
 
@@ -116,7 +126,7 @@ def perform_research(query: str, truth_source: str, llm: ChatOllama, depth: int 
             follow_up_results = perform_research(follow_up, truth_source, llm, depth + 1)
             search_results = f"{search_results}\n\n--- FOLLOW-UP RESEARCH ---\n{follow_up_results}"
     except Exception as e:
-        print(f"[Research] Analysis error: {e}")
+        print(f"[Research] Analysis error (likely LLM unavailable): {e}")
 
     return search_results
 
@@ -133,9 +143,14 @@ def run_audit_loop(query: str, search_results: str, llm: ChatOllama, truth_sourc
     Provide a concise, factual answer based ONLY on the context.
     """)
     chain = prompt | llm
-    response = chain.invoke({"context": search_results, "query": query})
     
-    ans = response.content if hasattr(response, "content") else response
+    try:
+        response = chain.invoke({"context": search_results, "query": query})
+        ans = response.content if hasattr(response, "content") else response
+    except Exception as e:
+        print(f"[SEAL] Audit Consensus Failed: {e}")
+        return
+
     print("\n--- RESEARCH SUMMARY ---")
     print(ans)
     
@@ -178,6 +193,10 @@ def main():
     
     truth_source = os.getenv("TRUTH_SOURCE", "ddg").lower()
     llm = ChatOllama(model="llama3.1:8b-instruct-q4_K_M", temperature=0)
+
+    if not check_ollama_availability(llm):
+        print("[SEAL] Aborting: LLM is unavailable.")
+        return
 
     print(f"[INFO] SEAL Agent active. Mode: Research & Audit (Systematic Grounding v8).")
 
